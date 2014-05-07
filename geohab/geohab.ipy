@@ -1,0 +1,145 @@
+import numpy as np
+
+def setGenv(gisbase="/usr/local/grass-7.0.svn/", gisdbase="grass7data", location="lonlat", mapset="PERMANENT"):
+    gisbase = os.environ['GISBASE'] = gisbase 
+    gisdbase = os.path.join(os.environ['HOME'], gisdbase)
+    sys.path.append(os.path.join(os.environ['GISBASE'], "etc", "python"))
+    gsetup.init(gisbase, gisdbase, location, mapset)
+    print(grass.gisenv())
+    
+def simpleDisplay(mapname, ltype="raster", grid=(250,'gray','black')):
+    !rm -rf {mapname}.png
+    !rm -rf /var/www/epifiles/seabass/{mapname}.png
+    !d.mon start=cairo output={mapname}.png
+    if ltype=="raster":
+        !d.rast map={mapname} --q
+    if ltype=="vector":
+        !d.vect map={mapname} --q
+    if grid:
+        !d.grid size={grid[0]} color={grid[1]} fontsize=18 textcolor={grid[2]}
+    !d.mon stop=cairo
+    return Image(filename='%s.png' % mapname) 
+
+
+
+
+def makemorfo(input,nnwin=9, pmwin=15, resolution=None, overwrite=True, remove=False):
+    r_elevation = input
+    #if resolution is not None:
+    #    grass.run_command('g.region', rast = r_elevation, flags = 'ap')
+    #else :
+    #    grass.run_command('g.region', rast = r_elevation, res=resolution, flags = 'ap')
+    suffix = str(r_elevation)+'_'
+    xavg = suffix+'avg'
+    xmin = suffix+'min'
+    xmax = suffix+'max'
+    xslope = suffix+'slope'
+    xprofc = suffix+'profc'
+    xcrosc = suffix+'crosc'
+    xminic = suffix+'minic'
+    xmaxic = suffix+'maxic'
+    xlongc = suffix+'longc'
+    xer = suffix+'er'
+    img = [suffix+'avg', suffix+'min', suffix+'max', suffix+'er', suffix+'slope', suffix+'profc', suffix+'crosc', suffix+'minic', suffix+'maxic', suffix+'longc']
+    if remove is True:
+        rast = '%s,%s,%s,%s,%s,%s,%s,%s,%s' % (xavg, xmin, xmax, xslope, xprofc, xcrosc, xminic, xmaxic, xlongc)
+        grass.run_command('g.remove', rast=rast)
+    else :
+        grass.run_command('r.neighbors', input=r_elevation, output=xavg, size=nnwin, method='average', overwrite=overwrite)
+        print("average done")
+        grass.run_command('r.neighbors', input=r_elevation, output=xmin, size=nnwin, method='minimum', overwrite=overwrite)
+        print("minimum done")
+        grass.run_command('r.neighbors', input=r_elevation, output=xmax, size=nnwin, method='maximum', overwrite=overwrite)
+        print("maximum done")
+        grass.run_command('r.mapcalc' , expression='%s = 1.0 * (%s - %s)/(%s - %s)' % (xer, xavg, xmin, xmax, xmin) , overwrite=True)
+        !r.fillnulls input={xer} output={xer} --o --q
+        print("er done")
+        grass.run_command('r.param.scale', input=r_elevation, output=xslope, size=nnwin, s_tol=0.1, c_tol=0.0001, param='slope', exp=0.0, zscale=1.0, overwrite=True) 
+        print("slope done")
+        grass.run_command('r.param.scale', input=r_elevation, output=xprofc, size=nnwin, s_tol=0.1, c_tol=0.0001, param='profc', exp=0.0, zscale=1.0, overwrite=True) 
+        print("profc done")
+        grass.run_command('r.param.scale', input=r_elevation, output=xcrosc, size=nnwin, s_tol=0.1, c_tol=0.0001, param='crosc', exp=0.0, zscale=1.0, overwrite=True) 
+        print("crosc done")
+        grass.run_command('r.param.scale', input=r_elevation, output=xminic, size=nnwin, s_tol=0.1, c_tol=0.0001, param='minic', exp=0.0, zscale=1.0, overwrite=True) 
+        print("minic done")
+        grass.run_command('r.param.scale', input=r_elevation, output=xmaxic, size=nnwin, s_tol=0.1, c_tol=0.0001, param='maxic', exp=0.0, zscale=1.0, overwrite=True) 
+        print("maxic done")
+        grass.run_command('r.param.scale', input=r_elevation, output=xlongc, size=nnwin, s_tol=0.1, c_tol=0.0001, param='longc', exp=0.0, zscale=1.0, overwrite=True) 
+        print("longc done")
+        vrange = grass.read_command('r.info', map=xslope, flags='r').strip().split('\n')
+        vmin = vrange[0].split('=')[1]
+        vmax = vrange[1].split('=')[1]
+        grass.run_command('r.mapcalc' , expression = '%s = (%s/%s)' % (xslope, xslope, vmax), overwrite=True)
+        print("xslope done")
+    return img
+
+def img2array(img):
+    rl = garray.array()
+    imagegroup = np.empty((rl.shape[0], rl.shape[1], 8), dtype='float')
+    for i,v in enumerate(img[3:]):
+        rl.read(v)
+        imagegroup[:, :, i] = rl
+    return imagegroup
+
+def spectralPlot(c):
+    for i in range(c.shape[0]):
+        plt.plot(c[i])
+
+def getKmeans(imagegroup='', k=5, samps=150, bands="all"):
+    if bands=="all":
+        (m1, c1) = kmeans(imagegroup[:, :, :], k, samps)
+    if bands!="all":
+        (m1, c1) = kmeans(imagegroup[:, :, range(0,bands)], k, samps)
+    return (m1, c1)
+
+def writeGarray(m, mapname):
+    clust = garray.array()
+    clust[...] = m
+    !g.remove rast=clust1
+    clust.write(mapname)
+    print("newmap %s written to GRASS MAPSET" % mapname)
+
+    
+
+
+def img2array2(img):
+    levels = len(img)-3
+    rl = garray.array()
+    imagegroup = np.empty((rl.shape[0], rl.shape[1], levels), dtype='float')
+    for i,v in enumerate(img[3:]):
+        rl.read(v)
+        imagegroup[:, :, i] = rl
+    return imagegroup
+
+def spectralPlot2(c):
+    for i in np.arange(c.shape[0]):
+        plt.plot(c[i])
+    
+def dict2Table(data, row_length=1, dictval=False):
+    """
+    render a python dictionary as HTML
+
+    :param str data: input dictionary
+    :param int row_length: html table length (num rows)
+    :param bol dictval: if False print out only dictionary keys
+
+    """
+    table=''
+    table += '<table>'
+    counter = 0
+
+    for element in iter(sorted(data)):
+        if counter % row_length == 0:
+            table += '<tr>'
+        table += '<td>%s</td>' % element
+        if dictval:
+            table += '<td>%s</td>' % data[element]
+        counter += 1
+        if counter % row_length == 0:
+            table += '</tr>'
+    if counter % row_length != 0:
+        for i in range(0, row_length - counter % row_length):
+            table += '<td>&nbsp;</td>'
+        table += '</tr>'
+    table += '</table>'
+    return HTML(table)
